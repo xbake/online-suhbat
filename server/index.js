@@ -12,7 +12,11 @@ require("dotenv").config();
 
 const prisma = new PrismaClient();
 const app = express();
-app.use(cors());
+
+const CLIENT_URL = process.env.CLIENT_URL || "http://localhost:3000";
+const SERVER_URL = process.env.SERVER_URL || "http://localhost:4000";
+
+app.use(cors({ origin: CLIENT_URL }));
 app.use(express.json());
 
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -105,7 +109,7 @@ app.post("/api/login", async (req, res) => {
 
 app.post("/api/upload", authMiddleware, upload.single("image"), (req, res) => {
   if (!req.file) return res.status(400).json({ error: "Fayl yuklanmadi" });
-  const imageUrl = `http://localhost:4000/uploads/${req.file.filename}`;
+  const imageUrl = `${SERVER_URL}/uploads/${req.file.filename}`;
   res.json({ imageUrl });
 });
 
@@ -160,7 +164,7 @@ app.get("/api/messages/:otherUsername", authMiddleware, async (req, res) => {
 
 const server = http.createServer(app);
 const io = new Server(server, {
-  cors: { origin: "http://localhost:3000", methods: ["GET", "POST"] },
+  cors: { origin: CLIENT_URL, methods: ["GET", "POST"] },
 });
 
 const onlineUsers = {};
@@ -222,10 +226,8 @@ io.on("connection", (socket) => {
     }
   });
 
-  // Reaksiya qo'shish/o'chirish (toggle)
   socket.on("toggle_reaction", async ({ messageId, emoji, otherUsername }) => {
     const userId = socket.data.userId;
-    const username = socket.data.username;
     if (!userId) return;
 
     try {
@@ -239,7 +241,6 @@ io.on("connection", (socket) => {
         await prisma.reaction.create({ data: { messageId, userId, emoji } });
       }
 
-      // Xabarning barcha reaksiyalarini qayta olib, ikkala tomonga yuboramiz
       const reactions = await prisma.reaction.findMany({
         where: { messageId },
         include: { user: true },
@@ -253,6 +254,24 @@ io.on("connection", (socket) => {
       socket.emit("reaction_update", payload);
     } catch (err) {
       console.error("Reaksiya xatosi:", err);
+    }
+  });
+
+  socket.on("typing", ({ to }) => {
+    const from = socket.data.username;
+    if (!from) return;
+    const targetSocketId = onlineUsers[to];
+    if (targetSocketId) {
+      io.to(targetSocketId).emit("user_typing", { from });
+    }
+  });
+
+  socket.on("stop_typing", ({ to }) => {
+    const from = socket.data.username;
+    if (!from) return;
+    const targetSocketId = onlineUsers[to];
+    if (targetSocketId) {
+      io.to(targetSocketId).emit("user_stop_typing", { from });
     }
   });
 
