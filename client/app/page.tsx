@@ -36,6 +36,25 @@ function getColor(name: string) {
   return colors[hash % colors.length];
 }
 
+function playNotificationSound() {
+  try {
+    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+    const ctx = new AudioCtx();
+    const oscillator = ctx.createOscillator();
+    const gain = ctx.createGain();
+    oscillator.connect(gain);
+    gain.connect(ctx.destination);
+    oscillator.type = "sine";
+    oscillator.frequency.setValueAtTime(880, ctx.currentTime);
+    gain.gain.setValueAtTime(0.15, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+    oscillator.start();
+    oscillator.stop(ctx.currentTime + 0.3);
+  } catch (err) {
+    console.error("Tovush xatosi:", err);
+  }
+}
+
 const QUICK_EMOJIS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
 const PICKER_EMOJIS = [
   "😀", "😂", "😍", "😎", "😢", "😡", "👍", "👎", "❤️", "🔥",
@@ -63,10 +82,21 @@ export default function Home() {
   const [reactionPickerFor, setReactionPickerFor] = useState<number | null>(null);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [typingUsers, setTypingUsers] = useState<Set<string>>(new Set());
+  const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({});
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isTypingRef = useRef(false);
+  const selectedUserRef = useRef<string | null>(null);
+  const myUsernameRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    selectedUserRef.current = selectedUser;
+  }, [selectedUser]);
+
+  useEffect(() => {
+    myUsernameRef.current = myUsername;
+  }, [myUsername]);
 
   useEffect(() => {
     const savedToken = localStorage.getItem("token");
@@ -78,6 +108,12 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    if (token && "Notification" in window && Notification.permission === "default") {
+      Notification.requestPermission();
+    }
+  }, [token]);
+
+  useEffect(() => {
     if (!token) return;
     socket = io(API_URL);
     socket.on("connect", () => {
@@ -87,9 +123,32 @@ export default function Home() {
       handleLogout();
     });
     socket.on("user_list", (users: string[]) => setOnlineUsers(users));
-    socket.on("private_message", (data: PrivateMessage) =>
-      setMessages((prev) => [...prev, data])
-    );
+    socket.on("private_message", (data: PrivateMessage) => {
+      setMessages((prev) => [...prev, data]);
+
+      const isIncoming = data.from !== myUsernameRef.current;
+      if (isIncoming) {
+        playNotificationSound();
+
+        if (data.from !== selectedUserRef.current) {
+          setUnreadCounts((prev) => ({
+            ...prev,
+            [data.from]: (prev[data.from] || 0) + 1,
+          }));
+        }
+
+        if (
+          "Notification" in window &&
+          Notification.permission === "granted" &&
+          (document.hidden || data.from !== selectedUserRef.current)
+        ) {
+          new Notification(`${data.from}dan yangi xabar`, {
+            body: data.imageUrl ? "📷 Rasm yubordi" : data.text,
+            icon: "/favicon.ico",
+          });
+        }
+      }
+    });
     socket.on("read_receipt", ({ by }: { by: string }) => {
       setMessages((prev) =>
         prev.map((m) => (m.to === by ? { ...m, read: true } : m))
@@ -121,6 +180,7 @@ export default function Home() {
 
   const handleSelectUser = async (u: string) => {
     setSelectedUser(u);
+    setUnreadCounts((prev) => ({ ...prev, [u]: 0 }));
     setHistoryLoading(true);
     try {
       const res = await fetch(`${API_URL}/api/messages/${u}`, {
@@ -179,6 +239,7 @@ export default function Home() {
     setMyUsername(null);
     setSelectedUser(null);
     setMessages([]);
+    setUnreadCounts({});
     if (socket) socket.disconnect();
   };
 
@@ -302,8 +363,6 @@ export default function Home() {
 
   return (
     <div className="flex h-[100dvh] bg-slate-900 md:max-w-4xl md:mx-auto md:shadow-2xl overflow-hidden">
-      {/* Sidebar: mobil'da to'liq ekran, faqat chat tanlanmaganda ko'rinadi.
-          Desktop'da (md+) doim ko'rinadi, sobit kenglikda. */}
       <div
         className={`
           w-full md:w-72 md:shrink-0 border-r border-slate-800 flex-col
@@ -346,18 +405,22 @@ export default function Home() {
                 <div className={`w-9 h-9 shrink-0 rounded-full ${getColor(u)} flex items-center justify-center text-white text-sm font-semibold`}>
                   {getInitials(u)}
                 </div>
-                <div className="flex flex-col min-w-0">
+                <div className="flex flex-col min-w-0 flex-1">
                   <span className="text-white text-sm font-medium truncate">{u}</span>
                   {typingUsers.has(u) && (
                     <span className="text-green-400 text-xs italic">yozmoqda...</span>
                   )}
                 </div>
+                {unreadCounts[u] > 0 && (
+                  <span className="bg-red-500 text-white text-xs font-bold rounded-full min-w-[20px] h-5 flex items-center justify-center px-1 shrink-0">
+                    {unreadCounts[u]}
+                  </span>
+                )}
               </div>
             ))}
         </div>
       </div>
 
-      {/* Chat oynasi: mobil'da faqat foydalanuvchi tanlanganda ko'rinadi. */}
       <div
         className={`
           flex-1 min-w-0 flex-col
@@ -372,7 +435,6 @@ export default function Home() {
         ) : (
           <>
             <div className="p-3 sm:p-4 border-b border-slate-800 flex items-center gap-2 sm:gap-3">
-              {/* Orqaga qaytish tugmasi — faqat mobil'da ko'rinadi */}
               <button
                 onClick={() => setSelectedUser(null)}
                 className="md:hidden text-slate-400 hover:text-white transition-colors text-xl px-1 shrink-0"
