@@ -187,7 +187,6 @@ export default function Home() {
       socket.emit("private_message", { to: selectedUser, text: input });
       setInput("");
       setShowEmojiPicker(false);
-      // Xabar yuborilgach "yozmoqda" holatini to'xtatamiz
       if (isTypingRef.current) {
         socket.emit("stop_typing", { to: selectedUser });
         isTypingRef.current = false;
@@ -244,26 +243,26 @@ export default function Home() {
 
   if (!token || !myUsername) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 gap-6 px-4">
-        <div className="w-16 h-16 rounded-2xl bg-blue-600 flex items-center justify-center text-2xl font-bold shadow-lg shadow-blue-600/30">
+      <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 gap-5 sm:gap-6 px-4 py-8">
+        <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl bg-blue-600 flex items-center justify-center text-xl sm:text-2xl font-bold shadow-lg shadow-blue-600/30">
           💬
         </div>
         <div className="text-center">
-          <h1 className="text-3xl font-bold text-white mb-1">Onlayn Suhbat</h1>
+          <h1 className="text-2xl sm:text-3xl font-bold text-white mb-1">Onlayn Suhbat</h1>
           <p className="text-slate-400 text-sm">
             {mode === "login" ? "Hisobingizga kiring" : "Yangi hisob yarating"}
           </p>
         </div>
         <div className="flex flex-col gap-3 w-full max-w-xs">
           <input
-            className="bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-600"
+            className="bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-600 text-base"
             placeholder="Username"
             value={username}
             onChange={(e) => setUsername(e.target.value)}
           />
           <input
             type="password"
-            className="bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-600"
+            className="bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-600 text-base"
             placeholder="Parol"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
@@ -273,7 +272,7 @@ export default function Home() {
           <button
             onClick={handleAuth}
             disabled={loading}
-            className="bg-blue-600 hover:bg-blue-500 transition-colors text-white font-medium rounded-xl py-3 shadow-lg shadow-blue-600/20 disabled:opacity-50"
+            className="bg-blue-600 hover:bg-blue-500 active:bg-blue-700 transition-colors text-white font-medium rounded-xl py-3 shadow-lg shadow-blue-600/20 disabled:opacity-50"
           >
             {loading ? "Kutilmoqda..." : mode === "login" ? "Kirish" : "Ro'yxatdan o'tish"}
           </button>
@@ -282,7 +281,7 @@ export default function Home() {
               setMode(mode === "login" ? "register" : "login");
               setAuthError("");
             }}
-            className="text-slate-400 text-sm hover:text-white transition-colors"
+            className="text-slate-400 text-sm hover:text-white transition-colors py-1"
           >
             {mode === "login"
               ? "Hisobingiz yo'qmi? Ro'yxatdan o'ting"
@@ -302,21 +301,28 @@ export default function Home() {
   const selectedUserTyping = selectedUser ? typingUsers.has(selectedUser) : false;
 
   return (
-    <div className="flex h-screen bg-slate-900 max-w-4xl mx-auto shadow-2xl">
-      <div className="w-72 border-r border-slate-800 flex flex-col">
+    <div className="flex h-[100dvh] bg-slate-900 md:max-w-4xl md:mx-auto md:shadow-2xl overflow-hidden">
+      {/* Sidebar: mobil'da to'liq ekran, faqat chat tanlanmaganda ko'rinadi.
+          Desktop'da (md+) doim ko'rinadi, sobit kenglikda. */}
+      <div
+        className={`
+          w-full md:w-72 md:shrink-0 border-r border-slate-800 flex-col
+          ${selectedUser ? "hidden md:flex" : "flex"}
+        `}
+      >
         <div className="p-4 border-b border-slate-800 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className={`w-9 h-9 rounded-full ${getColor(myUsername)} flex items-center justify-center text-white text-sm font-semibold`}>
+          <div className="flex items-center gap-3 min-w-0">
+            <div className={`w-9 h-9 shrink-0 rounded-full ${getColor(myUsername)} flex items-center justify-center text-white text-sm font-semibold`}>
               {getInitials(myUsername)}
             </div>
-            <div>
-              <p className="text-white font-medium text-sm">{myUsername}</p>
+            <div className="min-w-0">
+              <p className="text-white font-medium text-sm truncate">{myUsername}</p>
               <p className="text-green-400 text-xs">● Online</p>
             </div>
           </div>
           <button
             onClick={handleLogout}
-            className="text-slate-500 hover:text-red-400 text-xs transition-colors"
+            className="text-slate-500 hover:text-red-400 text-xs transition-colors shrink-0 pl-2"
           >
             Chiqish
           </button>
@@ -337,11 +343,11 @@ export default function Home() {
                   selectedUser === u ? "bg-blue-600" : "hover:bg-slate-800"
                 }`}
               >
-                <div className={`w-9 h-9 rounded-full ${getColor(u)} flex items-center justify-center text-white text-sm font-semibold`}>
+                <div className={`w-9 h-9 shrink-0 rounded-full ${getColor(u)} flex items-center justify-center text-white text-sm font-semibold`}>
                   {getInitials(u)}
                 </div>
-                <div className="flex flex-col">
-                  <span className="text-white text-sm font-medium">{u}</span>
+                <div className="flex flex-col min-w-0">
+                  <span className="text-white text-sm font-medium truncate">{u}</span>
                   {typingUsers.has(u) && (
                     <span className="text-green-400 text-xs italic">yozmoqda...</span>
                   )}
@@ -351,27 +357,41 @@ export default function Home() {
         </div>
       </div>
 
-      <div className="flex-1 flex flex-col">
+      {/* Chat oynasi: mobil'da faqat foydalanuvchi tanlanganda ko'rinadi. */}
+      <div
+        className={`
+          flex-1 min-w-0 flex-col
+          ${selectedUser ? "flex" : "hidden md:flex"}
+        `}
+      >
         {!selectedUser ? (
-          <div className="flex-1 flex flex-col items-center justify-center text-slate-500 gap-2">
+          <div className="flex-1 flex flex-col items-center justify-center text-slate-500 gap-2 px-4 text-center">
             <div className="text-4xl">👋</div>
             <p>Suhbatlashish uchun chapdan foydalanuvchi tanlang</p>
           </div>
         ) : (
           <>
-            <div className="p-4 border-b border-slate-800 flex items-center gap-3">
-              <div className={`w-9 h-9 rounded-full ${getColor(selectedUser)} flex items-center justify-center text-white text-sm font-semibold`}>
+            <div className="p-3 sm:p-4 border-b border-slate-800 flex items-center gap-2 sm:gap-3">
+              {/* Orqaga qaytish tugmasi — faqat mobil'da ko'rinadi */}
+              <button
+                onClick={() => setSelectedUser(null)}
+                className="md:hidden text-slate-400 hover:text-white transition-colors text-xl px-1 shrink-0"
+                aria-label="Orqaga"
+              >
+                ←
+              </button>
+              <div className={`w-9 h-9 shrink-0 rounded-full ${getColor(selectedUser)} flex items-center justify-center text-white text-sm font-semibold`}>
                 {getInitials(selectedUser)}
               </div>
-              <div>
-                <p className="text-white font-medium">{selectedUser}</p>
+              <div className="min-w-0">
+                <p className="text-white font-medium truncate">{selectedUser}</p>
                 {selectedUserTyping && (
                   <p className="text-green-400 text-xs italic">yozmoqda...</p>
                 )}
               </div>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+            <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-3">
               {historyLoading && (
                 <p className="text-slate-500 text-sm text-center">Yuklanmoqda...</p>
               )}
@@ -384,12 +404,12 @@ export default function Home() {
 
                 return (
                   <div key={msg.id ?? i} className={`flex ${isMine ? "justify-end" : "justify-start"}`}>
-                    <div className={`max-w-xs ${isMine ? "items-end" : "items-start"} flex flex-col gap-1 relative group`}>
+                    <div className={`max-w-[80%] sm:max-w-xs ${isMine ? "items-end" : "items-start"} flex flex-col gap-1 relative group`}>
                       {msg.imageUrl && (
                         <img
                           src={msg.imageUrl}
                           alt="rasm"
-                          className="rounded-xl max-w-[200px] max-h-[200px] object-cover"
+                          className="rounded-xl max-w-[160px] sm:max-w-[200px] max-h-[160px] sm:max-h-[200px] object-cover"
                         />
                       )}
                       {msg.text && (
@@ -397,7 +417,7 @@ export default function Home() {
                           onDoubleClick={() =>
                             setReactionPickerFor(reactionPickerFor === msg.id ? null : msg.id ?? null)
                           }
-                          className={`px-4 py-2 rounded-2xl text-sm cursor-pointer ${
+                          className={`px-4 py-2 rounded-2xl text-sm cursor-pointer break-words ${
                             isMine
                               ? "bg-blue-600 text-white rounded-br-sm"
                               : "bg-slate-800 text-white rounded-bl-sm"
@@ -440,7 +460,7 @@ export default function Home() {
                           onClick={() =>
                             setReactionPickerFor(reactionPickerFor === msg.id ? null : msg.id ?? null)
                           }
-                          className="text-slate-500 text-xs opacity-0 group-hover:opacity-100 transition-opacity self-start"
+                          className="text-slate-500 text-xs opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity self-start"
                         >
                           😊 reaksiya
                         </button>
@@ -471,7 +491,7 @@ export default function Home() {
             </div>
 
             {showEmojiPicker && (
-              <div className="mx-4 mb-2 p-3 bg-slate-800 rounded-xl border border-slate-700 grid grid-cols-10 gap-2">
+              <div className="mx-3 sm:mx-4 mb-2 p-3 bg-slate-800 rounded-xl border border-slate-700 grid grid-cols-6 sm:grid-cols-10 gap-2 max-h-40 overflow-y-auto">
                 {PICKER_EMOJIS.map((e) => (
                   <button
                     key={e}
@@ -484,7 +504,7 @@ export default function Home() {
               </div>
             )}
 
-            <div className="p-4 border-t border-slate-800 flex gap-2 items-center">
+            <div className="p-3 sm:p-4 border-t border-slate-800 flex gap-1.5 sm:gap-2 items-center">
               <input
                 type="file"
                 accept="image/*"
@@ -495,20 +515,20 @@ export default function Home() {
               <button
                 onClick={() => fileInputRef.current?.click()}
                 disabled={uploading}
-                className="text-slate-400 hover:text-white transition-colors text-xl px-1"
+                className="text-slate-400 hover:text-white transition-colors text-xl px-1 shrink-0"
                 title="Rasm yuborish"
               >
                 {uploading ? "⏳" : "📎"}
               </button>
               <button
                 onClick={() => setShowEmojiPicker((prev) => !prev)}
-                className="text-slate-400 hover:text-white transition-colors text-xl px-1"
+                className="text-slate-400 hover:text-white transition-colors text-xl px-1 shrink-0"
                 title="Emoji"
               >
                 😊
               </button>
               <input
-                className="flex-1 bg-slate-800 border border-slate-700 rounded-xl px-4 py-2 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                className="flex-1 min-w-0 bg-slate-800 border border-slate-700 rounded-xl px-3 sm:px-4 py-2 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-600 text-base"
                 placeholder="Xabar yozing..."
                 value={input}
                 onChange={(e) => handleInputChange(e.target.value)}
@@ -516,7 +536,7 @@ export default function Home() {
               />
               <button
                 onClick={sendMessage}
-                className="bg-blue-600 hover:bg-blue-500 transition-colors text-white rounded-xl px-5 py-2 font-medium"
+                className="bg-blue-600 hover:bg-blue-500 active:bg-blue-700 transition-colors text-white rounded-xl px-3 sm:px-5 py-2 font-medium shrink-0"
               >
                 Yuborish
               </button>
