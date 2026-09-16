@@ -13,6 +13,7 @@ type PrivateMessage = {
   to: string;
   text: string;
   imageUrl?: string | null;
+  audioUrl?: string | null;
   read?: boolean;
   time: string;
   reactions?: Reaction[];
@@ -74,6 +75,20 @@ function Avatar({ name, avatarUrl, sizeClass }: { name: string; avatarUrl?: stri
   );
 }
 
+function highlightMatch(text: string, query: string) {
+  if (!query.trim()) return text;
+  const parts = text.split(new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "gi"));
+  return parts.map((part, i) =>
+    part.toLowerCase() === query.toLowerCase() ? (
+      <mark key={i} className="bg-yellow-400 text-black rounded px-0.5">
+        {part}
+      </mark>
+    ) : (
+      part
+    )
+  );
+}
+
 const QUICK_EMOJIS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
 const PICKER_EMOJIS = [
   "😀", "😂", "😍", "😎", "😢", "😡", "👍", "👎", "❤️", "🔥",
@@ -107,6 +122,12 @@ export default function Home() {
   const [showProfileEditor, setShowProfileEditor] = useState(false);
   const [bioDraft, setBioDraft] = useState("");
   const [avatarUploading, setAvatarUploading] = useState(false);
+  const [userSearch, setUserSearch] = useState("");
+  const [showMessageSearch, setShowMessageSearch] = useState(false);
+  const [messageSearch, setMessageSearch] = useState("");
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const [audioUploading, setAudioUploading] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const avatarInputRef = useRef<HTMLInputElement>(null);
@@ -114,6 +135,10 @@ export default function Home() {
   const isTypingRef = useRef(false);
   const selectedUserRef = useRef<string | null>(null);
   const myUsernameRef = useRef<string | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
 
   useEffect(() => {
     selectedUserRef.current = selectedUser;
@@ -132,7 +157,6 @@ export default function Home() {
     }
   }, []);
 
-  // O'zining profilini yuklab olamiz
   useEffect(() => {
     if (!token) return;
     fetch(`${API_URL}/api/profile`, {
@@ -183,7 +207,7 @@ export default function Home() {
           (document.hidden || data.from !== selectedUserRef.current)
         ) {
           new Notification(`${data.from}dan yangi xabar`, {
-            body: data.imageUrl ? "📷 Rasm yubordi" : data.text,
+            body: data.imageUrl ? "📷 Rasm yubordi" : data.audioUrl ? "🎤 Ovozli xabar" : data.text,
             icon: "/favicon.ico",
           });
         }
@@ -215,12 +239,16 @@ export default function Home() {
   }, [token]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, selectedUser]);
+    if (!showMessageSearch) {
+      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [messages, selectedUser, showMessageSearch]);
 
   const handleSelectUser = async (u: string) => {
     setSelectedUser(u);
     setUnreadCounts((prev) => ({ ...prev, [u]: 0 }));
+    setShowMessageSearch(false);
+    setMessageSearch("");
     setHistoryLoading(true);
     try {
       const res = await fetch(`${API_URL}/api/messages/${u}`, {
@@ -344,7 +372,6 @@ export default function Home() {
     setReactionPickerFor(null);
   };
 
-  // Avatar rasm tanlanganda: yuklab, keyin profilga saqlaymiz
   const handleAvatarSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -394,6 +421,77 @@ export default function Home() {
       setShowProfileEditor(false);
     } catch (err) {
       console.error("Bio saqlashda xatolik:", err);
+    }
+  };
+
+  // Ovoz yozishni boshlash
+  const startRecording = async () => {
+    if (!selectedUser) return;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+      audioChunksRef.current = [];
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
+
+      mediaRecorder.onstop = async () => {
+        const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
+        streamRef.current?.getTracks().forEach((track) => track.stop());
+
+        if (audioBlob.size > 0 && selectedUser) {
+          setAudioUploading(true);
+          try {
+            const formData = new FormData();
+            formData.append("audio", audioBlob, "voice.webm");
+            const res = await fetch(`${API_URL}/api/upload-audio`, {
+              method: "POST",
+              headers: { Authorization: `Bearer ${token}` },
+              body: formData,
+            });
+            const data = await res.json();
+            if (data.audioUrl) {
+              socket.emit("private_message", { to: selectedUser, text: "", audioUrl: data.audioUrl });
+            }
+          } catch (err) {
+            console.error("Ovoz yuklashda xatolik:", err);
+          }
+          setAudioUploading(false);
+        }
+      };
+
+      mediaRecorder.start();
+      setIsRecording(true);
+      setRecordingSeconds(0);
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingSeconds((s) => s + 1);
+      }, 1000);
+    } catch (err) {
+      console.error("Mikrofonga ruxsat berilmadi:", err);
+      alert("Ovozli xabar yuborish uchun mikrofonga ruxsat kerak.");
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
+      if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+    }
+  };
+
+  const cancelRecording = () => {
+    if (mediaRecorderRef.current && isRecording) {
+      audioChunksRef.current = []; // hech narsa yubormaymiz
+      mediaRecorderRef.current.onstop = () => {
+        streamRef.current?.getTracks().forEach((track) => track.stop());
+      };
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
+      if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
     }
   };
 
@@ -454,6 +552,19 @@ export default function Home() {
       (m.from === selectedUser && m.to === myUsername)
   );
 
+  const visibleConversation =
+    showMessageSearch && messageSearch.trim()
+      ? conversation.filter((m) =>
+          m.text.toLowerCase().includes(messageSearch.toLowerCase())
+        )
+      : conversation;
+
+  const filteredOnlineUsers = onlineUsers.filter(
+    (u) =>
+      u.username !== myUsername &&
+      u.username.toLowerCase().includes(userSearch.toLowerCase())
+  );
+
   const selectedUserTyping = selectedUser ? typingUsers.has(selectedUser) : false;
   const selectedUserAvatar = onlineUsers.find((u) => u.username === selectedUser)?.avatarUrl;
 
@@ -486,36 +597,47 @@ export default function Home() {
             Chiqish
           </button>
         </div>
+
+        <div className="px-3 pt-3">
+          <div className="relative">
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-sm">🔍</span>
+            <input
+              value={userSearch}
+              onChange={(e) => setUserSearch(e.target.value)}
+              placeholder="Foydalanuvchi qidirish..."
+              className="w-full bg-slate-800 border border-slate-700 rounded-xl pl-9 pr-3 py-2 text-white placeholder-slate-500 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600"
+            />
+          </div>
+        </div>
+
         <div className="flex-1 overflow-y-auto p-2">
-          {onlineUsers.filter((u) => u.username !== myUsername).length === 0 && (
+          {filteredOnlineUsers.length === 0 && (
             <p className="text-slate-500 text-sm text-center mt-6 px-4">
-              Hozircha boshqa kimsa yo'q.
+              {userSearch ? "Hech kim topilmadi." : "Hozircha boshqa kimsa yo'q."}
             </p>
           )}
-          {onlineUsers
-            .filter((u) => u.username !== myUsername)
-            .map((u) => (
-              <div
-                key={u.username}
-                onClick={() => handleSelectUser(u.username)}
-                className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-colors mb-1 ${
-                  selectedUser === u.username ? "bg-blue-600" : "hover:bg-slate-800"
-                }`}
-              >
-                <Avatar name={u.username} avatarUrl={u.avatarUrl} sizeClass="w-9 h-9" />
-                <div className="flex flex-col min-w-0 flex-1">
-                  <span className="text-white text-sm font-medium truncate">{u.username}</span>
-                  {typingUsers.has(u.username) && (
-                    <span className="text-green-400 text-xs italic">yozmoqda...</span>
-                  )}
-                </div>
-                {unreadCounts[u.username] > 0 && (
-                  <span className="bg-red-500 text-white text-xs font-bold rounded-full min-w-[20px] h-5 flex items-center justify-center px-1 shrink-0">
-                    {unreadCounts[u.username]}
-                  </span>
+          {filteredOnlineUsers.map((u) => (
+            <div
+              key={u.username}
+              onClick={() => handleSelectUser(u.username)}
+              className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-colors mb-1 ${
+                selectedUser === u.username ? "bg-blue-600" : "hover:bg-slate-800"
+              }`}
+            >
+              <Avatar name={u.username} avatarUrl={u.avatarUrl} sizeClass="w-9 h-9" />
+              <div className="flex flex-col min-w-0 flex-1">
+                <span className="text-white text-sm font-medium truncate">{u.username}</span>
+                {typingUsers.has(u.username) && (
+                  <span className="text-green-400 text-xs italic">yozmoqda...</span>
                 )}
               </div>
-            ))}
+              {unreadCounts[u.username] > 0 && (
+                <span className="bg-red-500 text-white text-xs font-bold rounded-full min-w-[20px] h-5 flex items-center justify-center px-1 shrink-0">
+                  {unreadCounts[u.username]}
+                </span>
+              )}
+            </div>
+          ))}
         </div>
       </div>
 
@@ -541,19 +663,48 @@ export default function Home() {
                 ←
               </button>
               <Avatar name={selectedUser} avatarUrl={selectedUserAvatar} sizeClass="w-9 h-9" />
-              <div className="min-w-0">
+              <div className="min-w-0 flex-1">
                 <p className="text-white font-medium truncate">{selectedUser}</p>
                 {selectedUserTyping && (
                   <p className="text-green-400 text-xs italic">yozmoqda...</p>
                 )}
               </div>
+              <button
+                onClick={() => {
+                  setShowMessageSearch((prev) => !prev);
+                  setMessageSearch("");
+                }}
+                className={`text-xl px-1 shrink-0 transition-colors ${
+                  showMessageSearch ? "text-blue-400" : "text-slate-400 hover:text-white"
+                }`}
+                title="Xabar qidirish"
+              >
+                🔍
+              </button>
             </div>
+
+            {showMessageSearch && (
+              <div className="px-3 sm:px-4 pt-3">
+                <input
+                  autoFocus
+                  value={messageSearch}
+                  onChange={(e) => setMessageSearch(e.target.value)}
+                  placeholder="Xabarlarni qidirish..."
+                  className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-white placeholder-slate-500 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600"
+                />
+                {messageSearch.trim() && (
+                  <p className="text-slate-500 text-xs mt-1">
+                    {visibleConversation.length} ta natija topildi
+                  </p>
+                )}
+              </div>
+            )}
 
             <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-3">
               {historyLoading && (
                 <p className="text-slate-500 text-sm text-center">Yuklanmoqda...</p>
               )}
-              {conversation.map((msg, i) => {
+              {visibleConversation.map((msg, i) => {
                 const isMine = msg.from === myUsername;
                 const grouped: Record<string, number> = {};
                 (msg.reactions || []).forEach((r) => {
@@ -570,6 +721,13 @@ export default function Home() {
                           className="rounded-xl max-w-[160px] sm:max-w-[200px] max-h-[160px] sm:max-h-[200px] object-cover"
                         />
                       )}
+                      {msg.audioUrl && (
+                        <audio
+                          controls
+                          src={msg.audioUrl}
+                          className="h-10 max-w-[220px]"
+                        />
+                      )}
                       {msg.text && (
                         <div
                           onDoubleClick={() =>
@@ -581,7 +739,9 @@ export default function Home() {
                               : "bg-slate-800 text-white rounded-bl-sm"
                           }`}
                         >
-                          {msg.text}
+                          {showMessageSearch && messageSearch.trim()
+                            ? highlightMatch(msg.text, messageSearch)
+                            : msg.text}
                         </div>
                       )}
 
@@ -613,7 +773,7 @@ export default function Home() {
                         </div>
                       )}
 
-                      {msg.imageUrl && !msg.text && (
+                      {(msg.imageUrl || msg.audioUrl) && !msg.text && (
                         <button
                           onClick={() =>
                             setReactionPickerFor(reactionPickerFor === msg.id ? null : msg.id ?? null)
@@ -662,6 +822,23 @@ export default function Home() {
               </div>
             )}
 
+            {isRecording && (
+              <div className="mx-3 sm:mx-4 mb-2 p-3 bg-red-950/40 border border-red-900 rounded-xl flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 bg-red-500 rounded-full animate-pulse"></span>
+                  <span className="text-red-300 text-sm">
+                    Yozilmoqda... {Math.floor(recordingSeconds / 60)}:{(recordingSeconds % 60).toString().padStart(2, "0")}
+                  </span>
+                </div>
+                <button
+                  onClick={cancelRecording}
+                  className="text-red-400 text-xs hover:text-red-300"
+                >
+                  Bekor qilish
+                </button>
+              </div>
+            )}
+
             <div className="p-3 sm:p-4 border-t border-slate-800 flex gap-1.5 sm:gap-2 items-center">
               <input
                 type="file"
@@ -685,6 +862,29 @@ export default function Home() {
               >
                 😊
               </button>
+
+              {/* Mikrofon tugmasi: bosib ushlab gapiring, qo'yib yuboring */}
+              <button
+                onMouseDown={startRecording}
+                onMouseUp={stopRecording}
+                onMouseLeave={() => isRecording && stopRecording()}
+                onTouchStart={(e) => {
+                  e.preventDefault();
+                  startRecording();
+                }}
+                onTouchEnd={(e) => {
+                  e.preventDefault();
+                  stopRecording();
+                }}
+                disabled={audioUploading}
+                className={`text-xl px-1 shrink-0 transition-colors select-none ${
+                  isRecording ? "text-red-500 scale-110" : "text-slate-400 hover:text-white"
+                }`}
+                title="Bosib ushlab gapiring"
+              >
+                {audioUploading ? "⏳" : "🎤"}
+              </button>
+
               <input
                 className="flex-1 min-w-0 bg-slate-800 border border-slate-700 rounded-xl px-3 sm:px-4 py-2 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-600 text-base"
                 placeholder="Xabar yozing..."
@@ -703,7 +903,6 @@ export default function Home() {
         )}
       </div>
 
-      {/* Profil tahrirlash oynasi */}
       {showProfileEditor && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 px-4">
           <div className="bg-slate-800 rounded-2xl p-6 w-full max-w-sm flex flex-col gap-4">

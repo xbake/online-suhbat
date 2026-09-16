@@ -45,6 +45,19 @@ const upload = multer({
   },
 });
 
+// Ovozli xabarlar uchun alohida multer sozlamasi
+const audioStorage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, uploadsDir),
+  filename: (req, file, cb) => {
+    const uniqueName = "audio-" + Date.now() + "-" + Math.round(Math.random() * 1e9) + ".webm";
+    cb(null, uniqueName);
+  },
+});
+const uploadAudio = multer({
+  storage: audioStorage,
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+});
+
 app.get("/health", (req, res) => {
   res.json({ status: "ok", message: "Server ishlayapti" });
 });
@@ -107,7 +120,6 @@ app.post("/api/login", async (req, res) => {
   }
 });
 
-// O'zining profilini olish
 app.get("/api/profile", authMiddleware, async (req, res) => {
   try {
     const user = await prisma.user.findUnique({
@@ -121,7 +133,6 @@ app.get("/api/profile", authMiddleware, async (req, res) => {
   }
 });
 
-// Profilni yangilash (bio va/yoki avatar)
 app.put("/api/profile", authMiddleware, async (req, res) => {
   try {
     const { bio, avatarUrl } = req.body;
@@ -145,6 +156,13 @@ app.post("/api/upload", authMiddleware, upload.single("image"), (req, res) => {
   if (!req.file) return res.status(400).json({ error: "Fayl yuklanmadi" });
   const imageUrl = `${SERVER_URL}/uploads/${req.file.filename}`;
   res.json({ imageUrl });
+});
+
+// Ovozli xabar yuklash
+app.post("/api/upload-audio", authMiddleware, uploadAudio.single("audio"), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: "Fayl yuklanmadi" });
+  const audioUrl = `${SERVER_URL}/uploads/${req.file.filename}`;
+  res.json({ audioUrl });
 });
 
 app.get("/api/messages/:otherUsername", authMiddleware, async (req, res) => {
@@ -181,6 +199,7 @@ app.get("/api/messages/:otherUsername", authMiddleware, async (req, res) => {
       to: m.to.username,
       text: m.text,
       imageUrl: m.imageUrl,
+      audioUrl: m.audioUrl,
       read: m.fromId === req.userId ? m.read : true,
       time: new Date(m.createdAt).toLocaleTimeString("uz-UZ", {
         hour: "2-digit",
@@ -201,8 +220,7 @@ const io = new Server(server, {
   cors: { origin: CLIENT_URL, methods: ["GET", "POST"] },
 });
 
-// Endi har bir online foydalanuvchi uchun socketId va profil ma'lumotini saqlaymiz
-const onlineUsers = {}; // { username: { socketId, avatarUrl } }
+const onlineUsers = {};
 
 async function broadcastUserList() {
   const usernames = Object.keys(onlineUsers);
@@ -232,7 +250,7 @@ io.on("connection", (socket) => {
     }
   });
 
-  socket.on("private_message", async ({ to, text, imageUrl }) => {
+  socket.on("private_message", async ({ to, text, imageUrl, audioUrl }) => {
     const from = socket.data.username;
     const fromId = socket.data.userId;
     if (!from) return;
@@ -242,7 +260,13 @@ io.on("connection", (socket) => {
       if (!toUser) return;
 
       const saved = await prisma.message.create({
-        data: { text: text || "", imageUrl: imageUrl || null, fromId, toId: toUser.id },
+        data: {
+          text: text || "",
+          imageUrl: imageUrl || null,
+          audioUrl: audioUrl || null,
+          fromId,
+          toId: toUser.id,
+        },
       });
 
       const time = new Date(saved.createdAt).toLocaleTimeString("uz-UZ", {
@@ -255,6 +279,7 @@ io.on("connection", (socket) => {
         to,
         text: saved.text,
         imageUrl: saved.imageUrl,
+        audioUrl: saved.audioUrl,
         read: false,
         time,
         reactions: [],
@@ -319,7 +344,6 @@ io.on("connection", (socket) => {
     }
   });
 
-  // Profil yangilanganda (avatar/bio), online bo'lgan hamma odamlarga yangi ro'yxatni yuboramiz
   socket.on("profile_updated", async () => {
     await broadcastUserList();
   });
