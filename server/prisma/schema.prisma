@@ -11,6 +11,8 @@ model User {
   id            Int        @id @default(autoincrement())
   username      String     @unique
   password      String
+  avatarUrl     String?
+  bio           String?
   createdAt     DateTime   @default(now())
   sentMessages  Message[]  @relation("MessagesFrom")
   recvMessages  Message[]  @relation("MessagesTo")

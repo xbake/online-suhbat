@@ -18,6 +18,8 @@ type PrivateMessage = {
   reactions?: Reaction[];
 };
 
+type OnlineUser = { username: string; avatarUrl?: string | null };
+
 function getInitials(name: string) {
   return name.slice(0, 2).toUpperCase();
 }
@@ -55,6 +57,23 @@ function playNotificationSound() {
   }
 }
 
+function Avatar({ name, avatarUrl, sizeClass }: { name: string; avatarUrl?: string | null; sizeClass: string }) {
+  if (avatarUrl) {
+    return (
+      <img
+        src={avatarUrl}
+        alt={name}
+        className={`${sizeClass} shrink-0 rounded-full object-cover`}
+      />
+    );
+  }
+  return (
+    <div className={`${sizeClass} shrink-0 rounded-full ${getColor(name)} flex items-center justify-center text-white text-sm font-semibold`}>
+      {getInitials(name)}
+    </div>
+  );
+}
+
 const QUICK_EMOJIS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
 const PICKER_EMOJIS = [
   "😀", "😂", "😍", "😎", "😢", "😡", "👍", "👎", "❤️", "🔥",
@@ -72,8 +91,10 @@ export default function Home() {
 
   const [token, setToken] = useState<string | null>(null);
   const [myUsername, setMyUsername] = useState<string | null>(null);
+  const [myAvatarUrl, setMyAvatarUrl] = useState<string | null>(null);
+  const [myBio, setMyBio] = useState<string>("");
 
-  const [onlineUsers, setOnlineUsers] = useState<string[]>([]);
+  const [onlineUsers, setOnlineUsers] = useState<OnlineUser[]>([]);
   const [selectedUser, setSelectedUser] = useState<string | null>(null);
   const [messages, setMessages] = useState<PrivateMessage[]>([]);
   const [input, setInput] = useState("");
@@ -83,8 +104,12 @@ export default function Home() {
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [typingUsers, setTypingUsers] = useState<Set<string>>(new Set());
   const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({});
+  const [showProfileEditor, setShowProfileEditor] = useState(false);
+  const [bioDraft, setBioDraft] = useState("");
+  const [avatarUploading, setAvatarUploading] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const avatarInputRef = useRef<HTMLInputElement>(null);
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isTypingRef = useRef(false);
   const selectedUserRef = useRef<string | null>(null);
@@ -107,6 +132,21 @@ export default function Home() {
     }
   }, []);
 
+  // O'zining profilini yuklab olamiz
+  useEffect(() => {
+    if (!token) return;
+    fetch(`${API_URL}/api/profile`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        setMyAvatarUrl(data.avatarUrl || null);
+        setMyBio(data.bio || "");
+        setBioDraft(data.bio || "");
+      })
+      .catch((err) => console.error("Profilni yuklashda xatolik:", err));
+  }, [token]);
+
   useEffect(() => {
     if (token && "Notification" in window && Notification.permission === "default") {
       Notification.requestPermission();
@@ -122,7 +162,7 @@ export default function Home() {
     socket.on("auth_error", () => {
       handleLogout();
     });
-    socket.on("user_list", (users: string[]) => setOnlineUsers(users));
+    socket.on("user_list", (users: OnlineUser[]) => setOnlineUsers(users));
     socket.on("private_message", (data: PrivateMessage) => {
       setMessages((prev) => [...prev, data]);
 
@@ -237,6 +277,8 @@ export default function Home() {
     localStorage.removeItem("username");
     setToken(null);
     setMyUsername(null);
+    setMyAvatarUrl(null);
+    setMyBio("");
     setSelectedUser(null);
     setMessages([]);
     setUnreadCounts({});
@@ -302,6 +344,59 @@ export default function Home() {
     setReactionPickerFor(null);
   };
 
+  // Avatar rasm tanlanganda: yuklab, keyin profilga saqlaymiz
+  const handleAvatarSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setAvatarUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append("image", file);
+      const uploadRes = await fetch(`${API_URL}/api/upload`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData,
+      });
+      const uploadData = await uploadRes.json();
+      if (uploadData.imageUrl) {
+        const profileRes = await fetch(`${API_URL}/api/profile`, {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ avatarUrl: uploadData.imageUrl }),
+        });
+        const profileData = await profileRes.json();
+        setMyAvatarUrl(profileData.avatarUrl || null);
+        socket.emit("profile_updated");
+      }
+    } catch (err) {
+      console.error("Avatar yuklashda xatolik:", err);
+    }
+    setAvatarUploading(false);
+    if (avatarInputRef.current) avatarInputRef.current.value = "";
+  };
+
+  const handleSaveBio = async () => {
+    try {
+      const res = await fetch(`${API_URL}/api/profile`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ bio: bioDraft }),
+      });
+      const data = await res.json();
+      setMyBio(data.bio || "");
+      setShowProfileEditor(false);
+    } catch (err) {
+      console.error("Bio saqlashda xatolik:", err);
+    }
+  };
+
   if (!token || !myUsername) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 gap-5 sm:gap-6 px-4 py-8">
@@ -360,6 +455,7 @@ export default function Home() {
   );
 
   const selectedUserTyping = selectedUser ? typingUsers.has(selectedUser) : false;
+  const selectedUserAvatar = onlineUsers.find((u) => u.username === selectedUser)?.avatarUrl;
 
   return (
     <div className="flex h-[100dvh] bg-slate-900 md:max-w-4xl md:mx-auto md:shadow-2xl overflow-hidden">
@@ -370,15 +466,19 @@ export default function Home() {
         `}
       >
         <div className="p-4 border-b border-slate-800 flex items-center justify-between">
-          <div className="flex items-center gap-3 min-w-0">
-            <div className={`w-9 h-9 shrink-0 rounded-full ${getColor(myUsername)} flex items-center justify-center text-white text-sm font-semibold`}>
-              {getInitials(myUsername)}
-            </div>
+          <button
+            onClick={() => {
+              setBioDraft(myBio);
+              setShowProfileEditor(true);
+            }}
+            className="flex items-center gap-3 min-w-0 text-left"
+          >
+            <Avatar name={myUsername} avatarUrl={myAvatarUrl} sizeClass="w-9 h-9" />
             <div className="min-w-0">
               <p className="text-white font-medium text-sm truncate">{myUsername}</p>
               <p className="text-green-400 text-xs">● Online</p>
             </div>
-          </div>
+          </button>
           <button
             onClick={handleLogout}
             className="text-slate-500 hover:text-red-400 text-xs transition-colors shrink-0 pl-2"
@@ -387,33 +487,31 @@ export default function Home() {
           </button>
         </div>
         <div className="flex-1 overflow-y-auto p-2">
-          {onlineUsers.filter((u) => u !== myUsername).length === 0 && (
+          {onlineUsers.filter((u) => u.username !== myUsername).length === 0 && (
             <p className="text-slate-500 text-sm text-center mt-6 px-4">
               Hozircha boshqa kimsa yo'q.
             </p>
           )}
           {onlineUsers
-            .filter((u) => u !== myUsername)
+            .filter((u) => u.username !== myUsername)
             .map((u) => (
               <div
-                key={u}
-                onClick={() => handleSelectUser(u)}
+                key={u.username}
+                onClick={() => handleSelectUser(u.username)}
                 className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-colors mb-1 ${
-                  selectedUser === u ? "bg-blue-600" : "hover:bg-slate-800"
+                  selectedUser === u.username ? "bg-blue-600" : "hover:bg-slate-800"
                 }`}
               >
-                <div className={`w-9 h-9 shrink-0 rounded-full ${getColor(u)} flex items-center justify-center text-white text-sm font-semibold`}>
-                  {getInitials(u)}
-                </div>
+                <Avatar name={u.username} avatarUrl={u.avatarUrl} sizeClass="w-9 h-9" />
                 <div className="flex flex-col min-w-0 flex-1">
-                  <span className="text-white text-sm font-medium truncate">{u}</span>
-                  {typingUsers.has(u) && (
+                  <span className="text-white text-sm font-medium truncate">{u.username}</span>
+                  {typingUsers.has(u.username) && (
                     <span className="text-green-400 text-xs italic">yozmoqda...</span>
                   )}
                 </div>
-                {unreadCounts[u] > 0 && (
+                {unreadCounts[u.username] > 0 && (
                   <span className="bg-red-500 text-white text-xs font-bold rounded-full min-w-[20px] h-5 flex items-center justify-center px-1 shrink-0">
-                    {unreadCounts[u]}
+                    {unreadCounts[u.username]}
                   </span>
                 )}
               </div>
@@ -442,9 +540,7 @@ export default function Home() {
               >
                 ←
               </button>
-              <div className={`w-9 h-9 shrink-0 rounded-full ${getColor(selectedUser)} flex items-center justify-center text-white text-sm font-semibold`}>
-                {getInitials(selectedUser)}
-              </div>
+              <Avatar name={selectedUser} avatarUrl={selectedUserAvatar} sizeClass="w-9 h-9" />
               <div className="min-w-0">
                 <p className="text-white font-medium truncate">{selectedUser}</p>
                 {selectedUserTyping && (
@@ -606,6 +702,60 @@ export default function Home() {
           </>
         )}
       </div>
+
+      {/* Profil tahrirlash oynasi */}
+      {showProfileEditor && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 px-4">
+          <div className="bg-slate-800 rounded-2xl p-6 w-full max-w-sm flex flex-col gap-4">
+            <h2 className="text-white font-bold text-lg">Profilni tahrirlash</h2>
+
+            <div className="flex flex-col items-center gap-3">
+              <Avatar name={myUsername} avatarUrl={myAvatarUrl} sizeClass="w-20 h-20" />
+              <input
+                type="file"
+                accept="image/*"
+                ref={avatarInputRef}
+                onChange={handleAvatarSelect}
+                className="hidden"
+              />
+              <button
+                onClick={() => avatarInputRef.current?.click()}
+                disabled={avatarUploading}
+                className="text-blue-400 text-sm hover:text-blue-300 transition-colors"
+              >
+                {avatarUploading ? "Yuklanmoqda..." : "Rasmni o'zgartirish"}
+              </button>
+            </div>
+
+            <div>
+              <label className="text-slate-400 text-xs mb-1 block">Bio</label>
+              <textarea
+                value={bioDraft}
+                onChange={(e) => setBioDraft(e.target.value)}
+                maxLength={150}
+                rows={3}
+                className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-600 text-sm resize-none"
+                placeholder="O'zingiz haqingizda qisqacha..."
+              />
+            </div>
+
+            <div className="flex gap-2">
+              <button
+                onClick={() => setShowProfileEditor(false)}
+                className="flex-1 bg-slate-700 hover:bg-slate-600 text-white rounded-xl py-2 text-sm font-medium transition-colors"
+              >
+                Bekor qilish
+              </button>
+              <button
+                onClick={handleSaveBio}
+                className="flex-1 bg-blue-600 hover:bg-blue-500 text-white rounded-xl py-2 text-sm font-medium transition-colors"
+              >
+                Saqlash
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -107,6 +107,40 @@ app.post("/api/login", async (req, res) => {
   }
 });
 
+// O'zining profilini olish
+app.get("/api/profile", authMiddleware, async (req, res) => {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: req.userId },
+      select: { username: true, avatarUrl: true, bio: true },
+    });
+    res.json(user);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Server xatosi" });
+  }
+});
+
+// Profilni yangilash (bio va/yoki avatar)
+app.put("/api/profile", authMiddleware, async (req, res) => {
+  try {
+    const { bio, avatarUrl } = req.body;
+    const data = {};
+    if (bio !== undefined) data.bio = bio;
+    if (avatarUrl !== undefined) data.avatarUrl = avatarUrl;
+
+    const user = await prisma.user.update({
+      where: { id: req.userId },
+      data,
+      select: { username: true, avatarUrl: true, bio: true },
+    });
+    res.json(user);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Server xatosi" });
+  }
+});
+
 app.post("/api/upload", authMiddleware, upload.single("image"), (req, res) => {
   if (!req.file) return res.status(400).json({ error: "Fayl yuklanmadi" });
   const imageUrl = `${SERVER_URL}/uploads/${req.file.filename}`;
@@ -136,7 +170,7 @@ app.get("/api/messages/:otherUsername", authMiddleware, async (req, res) => {
       data: { read: true },
     });
 
-    const targetSocketId = onlineUsers[otherUser.username];
+    const targetSocketId = onlineUsers[otherUser.username]?.socketId;
     if (targetSocketId) {
       io.to(targetSocketId).emit("read_receipt", { by: req.username });
     }
@@ -167,22 +201,32 @@ const io = new Server(server, {
   cors: { origin: CLIENT_URL, methods: ["GET", "POST"] },
 });
 
-const onlineUsers = {};
+// Endi har bir online foydalanuvchi uchun socketId va profil ma'lumotini saqlaymiz
+const onlineUsers = {}; // { username: { socketId, avatarUrl } }
 
-function broadcastUserList() {
-  io.emit("user_list", Object.keys(onlineUsers));
+async function broadcastUserList() {
+  const usernames = Object.keys(onlineUsers);
+  if (usernames.length === 0) {
+    io.emit("user_list", []);
+    return;
+  }
+  const users = await prisma.user.findMany({
+    where: { username: { in: usernames } },
+    select: { username: true, avatarUrl: true },
+  });
+  io.emit("user_list", users);
 }
 
 io.on("connection", (socket) => {
   console.log("Yangi ulanish:", socket.id);
 
-  socket.on("join", (token) => {
+  socket.on("join", async (token) => {
     try {
       const decoded = jwt.verify(token, JWT_SECRET);
       socket.data.username = decoded.username;
       socket.data.userId = decoded.userId;
-      onlineUsers[decoded.username] = socket.id;
-      broadcastUserList();
+      onlineUsers[decoded.username] = { socketId: socket.id };
+      await broadcastUserList();
     } catch (err) {
       socket.emit("auth_error", "Token yaroqsiz, qayta kiring");
     }
@@ -216,7 +260,7 @@ io.on("connection", (socket) => {
         reactions: [],
       };
 
-      const targetSocketId = onlineUsers[to];
+      const targetSocketId = onlineUsers[to]?.socketId;
       if (targetSocketId) {
         io.to(targetSocketId).emit("private_message", payload);
       }
@@ -249,7 +293,7 @@ io.on("connection", (socket) => {
 
       const payload = { messageId, reactions: formattedReactions };
 
-      const targetSocketId = onlineUsers[otherUsername];
+      const targetSocketId = onlineUsers[otherUsername]?.socketId;
       if (targetSocketId) io.to(targetSocketId).emit("reaction_update", payload);
       socket.emit("reaction_update", payload);
     } catch (err) {
@@ -260,7 +304,7 @@ io.on("connection", (socket) => {
   socket.on("typing", ({ to }) => {
     const from = socket.data.username;
     if (!from) return;
-    const targetSocketId = onlineUsers[to];
+    const targetSocketId = onlineUsers[to]?.socketId;
     if (targetSocketId) {
       io.to(targetSocketId).emit("user_typing", { from });
     }
@@ -269,16 +313,21 @@ io.on("connection", (socket) => {
   socket.on("stop_typing", ({ to }) => {
     const from = socket.data.username;
     if (!from) return;
-    const targetSocketId = onlineUsers[to];
+    const targetSocketId = onlineUsers[to]?.socketId;
     if (targetSocketId) {
       io.to(targetSocketId).emit("user_stop_typing", { from });
     }
   });
 
-  socket.on("disconnect", () => {
+  // Profil yangilanganda (avatar/bio), online bo'lgan hamma odamlarga yangi ro'yxatni yuboramiz
+  socket.on("profile_updated", async () => {
+    await broadcastUserList();
+  });
+
+  socket.on("disconnect", async () => {
     if (socket.data.username) {
       delete onlineUsers[socket.data.username];
-      broadcastUserList();
+      await broadcastUserList();
     }
     console.log("Uzildi:", socket.id);
   });
